@@ -33,9 +33,17 @@
 *.lib
 
 # Executables
-*.exe
+#*.exe
 *.out
 *.app
 
 # debug information files
 *.dwo
+
+
+
+build/
+build_win/
+build-linux/
+build-windows/
+releases/
