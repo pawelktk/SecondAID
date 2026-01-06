@@ -1,5 +1,5 @@
 # SecondAID
-**SecondAID** is a powerful, standalone script editor and real-time debugger for The Guild 2 based on reverse engineering of AID protocol.
+**SecondAID** is a powerful, standalone script editor and real-time debugger for The Guild 2 based on reverse engineering of the AID protocol.
 
 <img width="1728" height="971" alt="Przechwycenie obrazu ekranu_2026-01-05_02-44-47" src="https://github.com/user-attachments/assets/53aba74f-795b-4f85-a365-162fdf3e44ca" />
 
@@ -10,7 +10,7 @@
 * **Multi-Tab Editor:** Open and edit multiple scripts simultaneously.
 * **Syntax Highlighting:** Full Lua syntax highlighting.
 * **Smart Indentation:** Auto-indentation on new lines based on code blocks (`then`, `do`, `function`, etc.).
-* **Visual Decorators:** Breakpoints and execution lines are rendered on the left margin and are fully interactible.
+* **Visual Decorators:** Breakpoints and execution lines are rendered on the left margin and are fully interactable.
 * **Find & Replace:** Standard search and replace functionality (`Ctrl+F`).
 * **Diff View:** Compare your local script changes against the version currently loaded in the game's cache.
 
@@ -35,7 +35,7 @@
 
 ### Static Analysis (Linter)
 * **Async Architecture:** Linting runs in a background thread to ensure the UI never freezes, providing instant feedback as you type.
-* **Tailored for The Guild 2:** Custom-tuned to understand the game's specific Lua dialect and built-in engine bindings (e.g., `SimGet`, `MsgBox`, `MeasureRun`) and globals, eliminating false positives common with generic Lua linter configuration.
+* **Tailored for The Guild 2:** Custom-tuned to understand the game's specific Lua dialect and built-in engine bindings (e.g., `SimGetLevel`, `MsgBox`, `MeasureRun`) and globals, eliminating false positives common with generic Lua linter configuration.
 * **Smart Global Resolution:** Automatically adapts to the game's unique idiosyncrasies, such as the global namespace behavior where local script functions become globally available via prefixes (e.g., `feud_CalculatePrice`).
 * **Dynamic Environment Modeling:** The editor actively scans the game files to build an internal definition model. It dynamically recognizes your custom functions across different files without requiring manual configuration.
 * **Project-Wide Analysis:**
@@ -52,7 +52,7 @@
     * Intelligent navigation that understands *The Guild 2* naming conventions (e.g., jumping to `feud_CalculatePrice` opens `AI/Feud.lua`).
 
 ### Hot-Reloading
-* **Auto-Reload on Save:** Toggleable workflow that instantly reloads cached script whenever you save it.
+* **Auto-Reload on Save:** Toggleable workflow that instantly reloads the cached script whenever you save it.
 * **Granular Control:**
     * **Reload Current Script:** Update only the file you are currently working on.
     * **Reload All Open Scripts:** Batch update all tabs currently open in the editor.
@@ -66,15 +66,15 @@
 
 ## Windows
 
-Just copy SecondAID-GUI.exe and luacheck.exe into the game folder (where Guild2.exe is) and run SecondAID-GUI.exe
+Copy `SecondAID-GUI.exe` and `luacheck.exe` into the game folder (where `Guild2.exe` is located) and run `SecondAID-GUI.exe`.
 
 ## Linux
 
-Luacheck is not included with Linux version of SecondAID, so you have to install it via your distros package manager beforehand, eg. on Arch:
+`luacheck` is not included with the Linux version of SecondAID. You must install it via your distribution's package manager. For example, on Arch Linux:
 ```
   sudo pacman -S luacheck
 ```
-Then just copy SecondAID-GUI_linux into your game folder and run.
+Then, copy `SecondAID-GUI_linux` into your game folder and run it.
 
 # Building
 
@@ -99,5 +99,5 @@ It's mainly used for automatically generating primary releases for SecondAID.
   cd build_win
   cmake -DCMAKE_TOOLCHAIN_FILE=../Toolchain-mingw.cmake ..
 ```
-*disclaimer: it works for cross-compiling from linux to windows. It should probably work when compiling Windows->Windows, but i don't have a way to test this*
+*Disclaimer: it works for cross-compiling from linux to windows. It should probably work when compiling Windows->Windows, but I don't have a way to test this*
 
