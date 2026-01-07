@@ -124,7 +124,9 @@ public:
 
     std::string command = "luacheck \"" + scriptPath +
                           "\" --no-color --formatter=plain --ranges --codes";
-
+    if (!configPath.empty()) {
+        command += " --config \"" + configPath + "\"";
+    }
     std::string output = ExecuteCommand(command.c_str());
 
     if (output.empty())

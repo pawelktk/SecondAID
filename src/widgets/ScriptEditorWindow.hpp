@@ -1,7 +1,6 @@
 #pragma once
 #include "../tools/AsyncLuaLinter.hpp"
 #include "../tools/GlobalsManager.hpp"
-#include "../tools/LuaLinter.hpp"
 #include "ImGuiFileDialog.h"
 #include "TextDiff.h"
 #include "TextEditor.h"
@@ -257,14 +256,6 @@ public:
           (w.type == "E" ? "Error" : "Warning"), w.message.c_str());
     }
   }
-
-  void RunLinter() {
-    if (FullPath.empty())
-      return;
-    LintWarnings = LuaLinter::Run(FullPath);
-  }
-
-  void ClearLinter() { LintWarnings.clear(); }
 
   bool IsDirty() const {
     if (IsCachedView)
@@ -569,10 +560,6 @@ public:
       bool sideBySide = diff.GetSideBySideMode();
       if (ImGui::Checkbox("Side-by-Side", &sideBySide))
         diff.SetSideBySideMode(sideBySide);
-      ImGui::SameLine();
-      // it doesn't really work correctly...
-      // if (ImGui::Checkbox("Ignore Whitespaces", &IgnoreWhitespacesInDiff))
-      //   RefreshDiff();
       ImGui::Separator();
       diff.Render("DiffView", ImGui::GetContentRegionAvail(), true);
     } else {
@@ -1081,19 +1068,6 @@ public:
         if (ImGui::MenuItem("Reload ALL Scripts (from Disk)")) {
           ReloadAllScriptsFromDisk();
         }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Check Syntax (Luacheck)", "F7")) {
-          if (ActiveDocument)
-            ActiveDocument->RunLinter();
-        }
-        if (ImGui::MenuItem("Check Syntax All Open Scripts")) {
-          for (auto &doc : Documents)
-            doc->RunLinter();
-        }
-        if (ImGui::MenuItem("Clear All Lint Markers")) {
-          for (auto &doc : Documents)
-            doc->ClearLinter();
-        }
         ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("Help")) {
@@ -1167,10 +1141,6 @@ public:
         if (ActiveDocument == doc && ImGui::GetIO().KeyCtrl &&
             ImGui::IsKeyPressed(ImGuiKey_S)) {
           SaveDocument(doc);
-        }
-
-        if (ImGui::IsKeyPressed(ImGuiKey_F7) && ActiveDocument) {
-          ActiveDocument->RunLinter();
         }
 
         if (ImGui::BeginTabItem(tabId.c_str(), &isOpen, flags)) {

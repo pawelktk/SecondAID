@@ -1,15 +1,46 @@
 #pragma once
-#include "LuaLinter.hpp"
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
+#include <memory>
 #include <mutex>
+#include <regex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace fs = std::filesystem;
+
+struct LintResult {
+  std::string file;
+  int line;
+  int startCol;
+  int endCol;
+  std::string type;
+  std::string message;
+};
+
+struct PipeCloser {
+  void operator()(FILE *f) const {
+    if (f) {
+#ifdef _WIN32
+      _pclose(f);
+#else
+      pclose(f);
+#endif
+    }
+  }
+};
 
 class AsyncLuaLinter {
   struct LintRequest {
@@ -38,6 +69,89 @@ class AsyncLuaLinter {
   std::atomic<bool> isWorking{false};
 
   std::string configPath;
+
+  static std::string ExecuteCommand(const char *cmd) {
+    std::string result;
+
+#ifdef _WIN32
+    // --- WINDOWS (CreateProcess + Pipes) ---
+    SECURITY_ATTRIBUTES saAttr;
+    saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+    saAttr.bInheritHandle = TRUE;
+    saAttr.lpSecurityDescriptor = NULL;
+
+    HANDLE hChildStd_OUT_Rd = NULL;
+    HANDLE hChildStd_OUT_Wr = NULL;
+
+    if (!CreatePipe(&hChildStd_OUT_Rd, &hChildStd_OUT_Wr, &saAttr, 0)) {
+      return "";
+    }
+
+    SetHandleInformation(hChildStd_OUT_Rd, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.hStdError = hChildStd_OUT_Wr;
+    si.hStdOutput = hChildStd_OUT_Wr;
+    si.dwFlags |= STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    ZeroMemory(&pi, sizeof(pi));
+
+    std::string cmdStr = std::string("cmd.exe /C ") + cmd;
+    std::vector<char> cmdMutable(cmdStr.begin(), cmdStr.end());
+    cmdMutable.push_back(0);
+
+    BOOL bSuccess = CreateProcessA(NULL,
+                                   cmdMutable.data(), // command line
+                                   NULL, // process security attributes
+                                   NULL, // primary thread security attributes
+                                   TRUE, // handles are inherited
+                                   CREATE_NO_WINDOW, // don't create window
+                                   NULL,             // use parent's environment
+                                   NULL, // use parent's current directory
+                                   &si,  // STARTUPINFO pointer
+                                   &pi); // receives PROCESS_INFORMATION
+
+    CloseHandle(hChildStd_OUT_Wr);
+
+    if (bSuccess) {
+      DWORD dwRead;
+      CHAR chBuf[4096];
+      bool bSuccessRead = FALSE;
+
+      while (true) {
+        bSuccessRead = ReadFile(hChildStd_OUT_Rd, chBuf, 4096, &dwRead, NULL);
+        if (!bSuccessRead || dwRead == 0)
+          break;
+        result.append(chBuf, dwRead);
+      }
+      WaitForSingleObject(pi.hProcess, 1000);
+      CloseHandle(pi.hProcess);
+      CloseHandle(pi.hThread);
+    }
+
+    CloseHandle(hChildStd_OUT_Rd);
+
+#else
+    // --- LINUX/MACOS (popen) ---
+    std::array<char, 256> buffer;
+    std::unique_ptr<FILE, PipeCloser> pipe(popen(cmd, "r"));
+
+    if (!pipe) {
+      std::cout << "[Linter] Failed to start process!" << std::endl;
+      return "";
+    }
+
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+      result += buffer.data();
+    }
+#endif
+
+    return result;
+  }
 
   void WorkerLoop() {
     while (running) {
@@ -77,7 +191,7 @@ class AsyncLuaLinter {
         cmd += " --config \"" + configPath + "\"";
       }
 
-      std::string output = LuaLinter::ExecuteCommand(cmd.c_str());
+      std::string output = ExecuteCommand(cmd.c_str());
 
       std::vector<LintResult> results;
       std::regex re(
