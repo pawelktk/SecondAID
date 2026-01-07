@@ -352,7 +352,6 @@ int main(int, char **) {
       ImGui::SetWindowFocus("Connection");
       firstFrame = false;
     }
-
     // Render
     ImGui::Render();
     int display_w, display_h;

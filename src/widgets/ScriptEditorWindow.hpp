@@ -1,6 +1,7 @@
 #pragma once
 #include "../tools/AsyncLuaLinter.hpp"
 #include "../tools/GlobalsManager.hpp"
+#include "../tools/ScriptEditorAutocomplete.hpp"
 #include "ImGuiFileDialog.h"
 #include "TextDiff.h"
 #include "TextEditor.h"
@@ -550,7 +551,8 @@ public:
   }
 
   void DrawContent(const std::set<int> &activeBreakpoints,
-                   const std::set<int> &errorLines) {
+                   const std::set<int> &errorLines,
+                   AutocompleteSystem &autocomplete) {
     if (IsDiffOpen) {
       if (ImGui::Button("<- Back to Editor"))
         IsDiffOpen = false;
@@ -564,6 +566,9 @@ public:
       diff.Render("DiffView", ImGui::GetContentRegionAvail(), true);
     } else {
       RefreshMarkers(activeBreakpoints, errorLines);
+      if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        autocomplete.PreRender(editor);
+      }
       HandleInputs();
 
       if (ImGui::BeginMenuBar()) {
@@ -584,6 +589,14 @@ public:
           val = editor.IsShowScrollbarMiniMapEnabled();
           if (ImGui::MenuItem("Show MiniMap", nullptr, &val))
             editor.SetShowScrollbarMiniMapEnabled(val);
+          if (ImGui::MenuItem("Enable Autocomplete", nullptr,
+                              &autocomplete.Enabled)) {
+            // TODO: write to config
+          }
+          ImGui::BeginDisabled(!autocomplete.Enabled);
+          ImGui::MenuItem("Suppress autocomplete on Lua Keywords", nullptr,
+                          &autocomplete.SuppressOnLuaKeywords);
+          ImGui::EndDisabled();
           ImGui::EndMenu();
         }
         ImGui::EndMenuBar();
@@ -609,7 +622,11 @@ public:
       float statusBarHeight = ImGui::GetFrameHeight();
       ImGui::BeginChild("EditorRegion", ImVec2(0, -statusBarHeight));
       editor.Render("TextEditor");
+      if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        autocomplete.PostRender(editor);
+      }
       ImGui::EndChild();
+      autocomplete.DrawPopup();
 
       int line, col;
       editor.GetCurrentCursor(line, col);
@@ -654,6 +671,8 @@ class ScriptEditorWindow {
   int NewFileCounter = 1;
 
   bool OpenAboutModal = false;
+
+  AutocompleteSystem mAutocomplete;
 
   void HandleGlobalInputs() {
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
@@ -1147,7 +1166,7 @@ public:
           ActiveDocument = doc;
           const auto &bps = GlobalBreakpoints[doc->RelativePathLower];
           const auto &errs = GlobalErrors[doc->RelativePathLower];
-          doc->DrawContent(bps, errs);
+          doc->DrawContent(bps, errs, mAutocomplete);
           ImGui::EndTabItem();
         }
 
