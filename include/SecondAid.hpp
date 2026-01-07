@@ -13,6 +13,19 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+// Needed for error codes
+#include <winsock2.h>
+#endif
+
+uint32_t GetTimeMs() {
+  using namespace std::chrono;
+  return (uint32_t)duration_cast<milliseconds>(
+             steady_clock::now().time_since_epoch())
+      .count();
+}
+
 struct BreakpointInfo {
   std::string File;
   int Line;
@@ -130,6 +143,11 @@ void SecondAid::Start(std::string ip) {
     return;
   useIP = ip;
   g_Socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+  int rcvBufSize = 1024 * 1024; // 1MB
+  setsockopt(g_Socket, SOL_SOCKET, SO_RCVBUF, (char *)&rcvBufSize,
+             sizeof(rcvBufSize));
+
   sockaddr_in addr = {};
   addr.sin_family = AF_INET;
   addr.sin_port = htons(AID_PORT);
@@ -149,7 +167,23 @@ void SecondAid::Start(std::string ip) {
 }
 
 void SecondAid::SendPacket(AIDPacket const &packet) {
-  packet.Send(g_Socket, g_TargetAddr);
+  int res = packet.Send(g_Socket, g_TargetAddr);
+
+  if (res == SOCKET_ERROR) {
+#ifdef _WIN32
+    int err = WSAGetLastError();
+    if (err == WSAEACCES) {
+      static uint32_t lastLogTime = 0;
+      uint32_t now = GetTimeMs();
+      if (now - lastLogTime > 1000) {
+        callbacks.OnNetworkLogReceived(
+            "CRITICAL: Send blocked! Permission Denied (Check Firewall).",
+            0xFF0000FF);
+        lastLogTime = now;
+      }
+    }
+#endif
+  }
 }
 
 AIDPacketHeader SecondAid::GetHeaderTemplate() {
@@ -330,21 +364,17 @@ void SecondAid::ProcessAutoStep(const std::string &file, int line) {
 // Thread funcs
 //
 
-uint32_t GetTimeMs() {
-  using namespace std::chrono;
-  return (uint32_t)duration_cast<milliseconds>(
-             steady_clock::now().time_since_epoch())
-      .count();
-}
-
 void SecondAid::ConnectionManagerThreadFunc() {
   int loopCounter = 0;
+  int handshakeAttempts = 0;
+
   while (g_Running) {
     uint32_t now = GetTimeMs();
     if (g_IsConnected && (now - g_LastRecvTime > 3000)) {
       g_IsConnected = false;
       g_RecievedReadyPacket = false;
       callbacks.OnConnectionStateChanged(ConnectionState::CONNECTION_LOST);
+      handshakeAttempts = 0;
     }
 
     AIDPacketHeader handshake = GetHeaderTemplate();
@@ -358,8 +388,18 @@ void SecondAid::ConnectionManagerThreadFunc() {
 
     if (!g_IsConnected) {
       SendPacket(handshake);
+      handshakeAttempts++;
+
+      if (handshakeAttempts % 5 == 0) {
+        callbacks.OnNetworkLogReceived("Waiting for handshake... (Attempt " +
+                                           std::to_string(handshakeAttempts) +
+                                           "). Check Firewall/IP.",
+                                       0xFFAAAA00);
+      }
+
       std::this_thread::sleep_for(std::chrono::milliseconds(250));
     } else {
+      handshakeAttempts = 0;
       SendPacket(ping);
       if (loopCounter % 4 == 0)
         SendPacket(handshake);
@@ -377,18 +417,45 @@ void SecondAid::ReceiverThreadFunc() {
   while (g_Running) {
     int bytes = recvfrom(g_Socket, buffer, sizeof(buffer), 0,
                          (sockaddr *)&sender, &senderLen);
+    if (bytes == SOCKET_ERROR) {
+#ifdef _WIN32
+      int err = WSAGetLastError();
+      if (err == WSAECONNRESET) {
+        callbacks.OnNetworkLogReceived(
+            "Error: Remote Port Unreachable! (Game closed?)", 0xFF5555FF);
+      } else if (err != WSAEWOULDBLOCK && err != WSAETIMEDOUT) {
+        callbacks.OnNetworkLogReceived("Socket Error: " + std::to_string(err),
+                                       0xFF5555FF);
+      }
+#endif
+      continue;
+    }
+
     if (bytes < (int)sizeof(AIDPacketHeader))
       continue;
 
     AIDPacketHeader *pkt = (AIDPacketHeader *)buffer;
-    if (pkt->Magic != AID_MAGIC)
+
+    if (pkt->Magic != AID_MAGIC) {
+      std::string senderIP = inet_ntoa(sender.sin_addr);
+      callbacks.OnNetworkLogReceived("WARN: Invalid Magic from " + senderIP,
+                                     0xFFAA00FF);
       continue;
+    }
+
+    if (sender.sin_addr.s_addr != g_TargetAddr.sin_addr.s_addr) {
+      std::string senderIP = inet_ntoa(sender.sin_addr);
+      callbacks.OnNetworkLogReceived("Packet from unexpected IP: " + senderIP,
+                                     0xFF8888FF);
+    }
 
     g_LastRecvTime = GetTimeMs();
     if (!g_IsConnected) {
       g_IsConnected = true;
       SendLuaAttach();
       callbacks.OnConnectionStateChanged(ConnectionState::CONNECTED);
+      callbacks.OnNetworkLogReceived("Handshake successful! Connected.",
+                                     0xFF00FF00);
     }
     char *payload = buffer + sizeof(AIDPacketHeader);
     AIDPacket pktFull(*pkt, BinaryStream(payload, pkt->PayloadSize));

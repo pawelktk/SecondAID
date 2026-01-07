@@ -101,14 +101,15 @@ public:
   }
   void SetPayload(BinaryStream raw) { payload = raw; }
 
-  void Send(SOCKET fd, sockaddr_in targetAddr) const {
+  int Send(SOCKET fd, sockaddr_in targetAddr) const {
     std::vector<uint8_t> buffer(sizeof(AIDPacketHeader) + header.PayloadSize);
     std::memcpy(buffer.data(), &header, sizeof(AIDPacketHeader));
     if (payload.size() && header.PayloadSize > 0)
       std::memcpy(buffer.data() + sizeof(AIDPacketHeader), payload.data(),
                   header.PayloadSize);
-    sendto(fd, (const char *)buffer.data(), (int)buffer.size(), 0,
-           (sockaddr *)&targetAddr, sizeof(targetAddr));
+
+    return sendto(fd, (const char *)buffer.data(), (int)buffer.size(), 0,
+                  (sockaddr *)&targetAddr, sizeof(targetAddr));
   }
 
   std::string toString() const {

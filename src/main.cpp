@@ -44,6 +44,8 @@ struct AppState {
 
   std::vector<EventLuaError> pendingLuaErrors;
 
+  std::vector<std::pair<std::string, uint32_t>> pendingNetworkLogs;
+
   std::string CurrentContextFile = "Unknown";
   int CurrentContextLine = 0;
   std::string CurrentPauseReason = "Manual"; // "Step", "Breakpoint", "Manual"
@@ -60,6 +62,11 @@ struct AppState {
   void EnqueueLog(EventGameLog log) {
     std::lock_guard<std::mutex> lock(queueMutex);
     pendingLogs.push_back(log);
+  }
+
+  void EnqueueNetworkLog(const std::string &msg, uint32_t color) {
+    std::lock_guard<std::mutex> lock(queueMutex);
+    pendingNetworkLogs.push_back({msg, color});
   }
 
   void ProcessEvents() {
@@ -80,6 +87,11 @@ struct AppState {
                              "Error", 0xFF0000FF);
     }
     pendingLuaErrors.clear();
+
+    for (const auto &netLog : pendingNetworkLogs) {
+      appStatusWindow.AddLog(netLog.first, "Network", netLog.second);
+    }
+    pendingNetworkLogs.clear();
   }
 };
 
@@ -101,6 +113,11 @@ void SetupAidCallbacks(AppState &app) {
     app.EnqueueLog(event);
   };
 
+  app.aid.Callbacks().OnNetworkLogReceived = [&app](std::string msg,
+                                                    uint32_t color) {
+    app.EnqueueNetworkLog(msg, color);
+  };
+
   app.aid.Callbacks().OnLuaError = [&app](EventLuaError err) {
     app.EnqueueLuaError(err);
     app.scriptEditor.MarkErrorLine(err.script, err.line - 1);
@@ -111,19 +128,25 @@ void SetupAidCallbacks(AppState &app) {
     std::string msg;
     switch (state) {
     case ConnectionState::CONNECTED:
-      msg = "Connected to server.";
+      msg = "Connected to server (Handshake OK). Waiting for game payload...";
       break;
     case ConnectionState::GAME_READY:
-      msg = "Game Ready! Debugger attached.";
+      msg = "Game Ready! Debugger attached and active.";
       break;
     case ConnectionState::GAME_DISCONNECTED:
-      msg = "Game Disconnected.";
+      msg = "Game Disconnected normally. Waiting for new connection...";
       break;
     case ConnectionState::CONNECTION_LOST:
-      msg = "Connection Lost.";
+      msg = "Connection Lost unexpectedly! \n"
+            "   - Check if the game crashed.\n"
+            "   - Check if Firewall/Antivirus is blocking port 56000.\n"
+            "   - Ensure both devices are on the same network.";
       break;
     case ConnectionState::FAILED_BIND_PORT:
-      msg = "Failed to bind port.";
+      msg = "CRITICAL: Failed to bind port 56000!\n"
+            "   - Is another instance of SecondAID running?\n"
+            "   - Is the port used by another application?\n"
+            "   - Try restarting SecondAID.";
       break;
     }
     app.AddSystemLog(msg);
@@ -187,7 +210,7 @@ int main(int, char **) {
 
   app.connectionWindow.Setup(
       [&app](std::string ip) {
-        app.AddSystemLog("Connecting to " + ip + "...");
+        app.AddSystemLog("Connecting to " + ip + " (Port 56000)...");
         app.aid.Start(ip);
       },
       [&app]() {

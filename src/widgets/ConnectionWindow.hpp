@@ -118,6 +118,9 @@ public:
       break;
     case ConnectionState::GAME_DISCONNECTED:
     case ConnectionState::CONNECTION_LOST:
+      IsConnected = false;
+      IsConnecting = true;
+      IsGameReady = false;
     case ConnectionState::FAILED_BIND_PORT:
       IsConnected = false;
       IsConnecting = false;

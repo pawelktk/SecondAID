@@ -20,4 +20,6 @@ struct AidCallbacks {
   std::function<void()> OnScriptResumed = []() {};
   std::function<void(std::string file, int line, std::string function)>
       OnDbgLocationUpdate = [](auto, auto, auto) {};
+  std::function<void(std::string msg, uint32_t color)> OnNetworkLogReceived =
+      [](auto, auto) {};
 };
