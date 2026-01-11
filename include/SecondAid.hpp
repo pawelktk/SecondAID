@@ -58,6 +58,12 @@ public:
 
   AidCallbacks callbacks;
 
+  bool m_IsReassembling = false;
+  AIDPacketHeader m_PendingHeader;
+  std::vector<uint8_t> m_ReassemblyBuffer;
+  void ProcessCompletePacket(AIDPacketHeader header,
+                             std::vector<uint8_t> &payloadData);
+
   void SendPacket(AIDPacket const &packet);
   void SendDisconnectPacket();
   AIDPacketHeader GetHeaderTemplate();
@@ -409,6 +415,124 @@ void SecondAid::ConnectionManagerThreadFunc() {
   }
 }
 
+void SecondAid::ProcessCompletePacket(AIDPacketHeader header,
+                                      std::vector<uint8_t> &payloadData) {
+  BinaryStream payloadStream;
+  payloadStream.write(payloadData);
+  AIDPacket pktFull(header, payloadStream);
+
+  switch (header.PacketID) {
+  case AIDPacketID::Log: {
+    if (strncmp(header.Category, "LOGGER", 6) == 0) {
+      char *msgPtr = (char *)payloadData.data();
+      std::string channel(msgPtr);
+      std::string msg(msgPtr + channel.size() + 1);
+      callbacks.OnGameLogReceived(
+          EventGameLog(channel, msg, header.Data.Log.ColorRGB));
+    } else {
+      callbacks.OnUnimplementedPacketReceived(pktFull);
+    }
+    break;
+  }
+  case AIDPacketID::Handshake: {
+    if (strncmp(header.Category, "LuaDebugger", 11) == 0 &&
+        payloadData.size() >= 4) {
+      int32_t cmdID = 0;
+      std::memcpy(&cmdID, payloadData.data(), 4);
+      char *data = (char *)payloadData.data() + 4;
+      int dLen = (int)payloadData.size() - 4;
+
+      if (cmdID == 6 || cmdID == 4) {
+        if (g_AutoMode == IDLE) {
+          callbacks.OnScriptPaused((cmdID == 6) ? PauseReason::BREAKPOINT
+                                                : PauseReason::STEP);
+          RefreshWatches();
+        }
+      } else if (cmdID == 5) {
+        callbacks.OnScriptResumed();
+        g_AutoMode = IDLE;
+      } else if (cmdID == 36) {
+        if (dLen == 2)
+          callbacks.OnScriptFinished();
+        else
+          callbacks.OnContextInfoRecieved(
+              EventGotScriptContext(std::string(data)));
+      } else if (cmdID == 3) {
+        std::string f = data;
+        data += f.length() + 1;
+        std::string func = data;
+        data += func.length() + 1;
+        int32_t ln = 0;
+        std::memcpy(&ln, data, 4);
+
+        g_CurrentFile = f;
+        if (g_AutoMode != IDLE) {
+          ProcessAutoStep(f, ln);
+        } else {
+          callbacks.OnDbgLocationUpdate(f, ln, func);
+        }
+      } else if (cmdID == 41) {
+        callbacks.OnLuaError(EventLuaError(std::string(data, dLen)));
+        g_AutoMode = IDLE;
+      } else if (cmdID == 10) {
+        std::string n = data;
+        data += n.length() + 1;
+        callbacks.OnWatchRecieved(n, data);
+      } else if (cmdID == 12) {
+        std::string n = data;
+        data += n.length() + 1;
+
+        char *end = (char *)payloadData.data() + payloadData.size();
+        int len = (int)(end - data);
+        len = (len < 0) ? 0 : len;
+
+        callbacks.OnSourceReceived(n, std::string(data, len));
+      } else {
+        callbacks.OnUnimplementedPacketReceived(pktFull);
+      }
+    } else {
+      callbacks.OnUnimplementedPacketReceived(pktFull);
+    }
+    break;
+  }
+  case AIDPacketID::DataResponse: {
+    char *payloadPtr = (char *)payloadData.data();
+    if (strncmp(header.Category, "PTree", 5) == 0) {
+      std::cout << "[TREE] Received (" << header.PayloadSize << " bytes)"
+                << std::endl;
+    } else if (!*header.Category && header.PayloadSize == 8 &&
+               (strncmp(payloadPtr, "GuildII", 8) == 0)) {
+      if (!g_RecievedReadyPacket) {
+        SendLuaAttach();
+        callbacks.OnConnectionStateChanged(ConnectionState::GAME_READY);
+        g_RecievedReadyPacket = true;
+      }
+    } else {
+      callbacks.OnUnimplementedPacketReceived(pktFull);
+    }
+    break;
+  }
+  case AIDPacketID::Disconnect:
+    callbacks.OnConnectionStateChanged(ConnectionState::GAME_DISCONNECTED);
+    g_IsConnected = false;
+    g_RecievedReadyPacket = false;
+    break;
+
+  case AIDPacketID::Dropped:
+    std::cout << ANSI_RED << "[SYSTEM] Packet dropped." << ANSI_RESET
+              << std::endl;
+    break;
+
+  case AIDPacketID::SyncPing:
+  case AIDPacketID::SyncPong:
+  case AIDPacketID::Ping:
+    break;
+
+  default:
+    callbacks.OnUnimplementedPacketReceived(pktFull);
+  }
+}
+
 void SecondAid::ReceiverThreadFunc() {
   char buffer[65535];
   sockaddr_in sender;
@@ -417,6 +541,7 @@ void SecondAid::ReceiverThreadFunc() {
   while (g_Running) {
     int bytes = recvfrom(g_Socket, buffer, sizeof(buffer), 0,
                          (sockaddr *)&sender, &senderLen);
+
     if (bytes == SOCKET_ERROR) {
 #ifdef _WIN32
       int err = WSAGetLastError();
@@ -428,6 +553,34 @@ void SecondAid::ReceiverThreadFunc() {
                                        0xFF5555FF);
       }
 #endif
+      continue;
+    }
+
+    if (bytes <= 0)
+      continue;
+
+    if (m_IsReassembling) {
+      if (bytes >= (int)sizeof(AIDPacketHeader)) {
+        AIDPacketHeader *potentialHeader = (AIDPacketHeader *)buffer;
+        if (potentialHeader->Magic == AID_MAGIC) {
+          m_IsReassembling = false;
+          m_ReassemblyBuffer.clear();
+          callbacks.OnNetworkLogReceived(
+              "WARN: Dropped fragmented packet (New header arrived)",
+              0xFFAA00FF);
+        }
+      }
+    }
+
+    if (m_IsReassembling) {
+      m_ReassemblyBuffer.insert(m_ReassemblyBuffer.end(), buffer,
+                                buffer + bytes);
+
+      if (m_ReassemblyBuffer.size() >= m_PendingHeader.PayloadSize) {
+        ProcessCompletePacket(m_PendingHeader, m_ReassemblyBuffer);
+        m_IsReassembling = false;
+        m_ReassemblyBuffer.clear();
+      }
       continue;
     }
 
@@ -457,128 +610,22 @@ void SecondAid::ReceiverThreadFunc() {
       callbacks.OnNetworkLogReceived("Handshake successful! Connected.",
                                      0xFF00FF00);
     }
-    char *payload = buffer + sizeof(AIDPacketHeader);
-    AIDPacket pktFull(*pkt, BinaryStream(payload, pkt->PayloadSize));
 
-    switch (pkt->PacketID) {
-    case AIDPacketID::Log: {
-      if (strncmp(pkt->Category, "LOGGER", 6) == 0) {
-        char *msgPtr = buffer + sizeof(AIDPacketHeader);
-        std::string channel(msgPtr);
-        std::string msg(msgPtr + channel.size() + 1);
-        callbacks.OnGameLogReceived(
-            EventGameLog(channel, msg, pkt->Data.Log.ColorRGB));
-      } else {
-        callbacks.OnUnimplementedPacketReceived(pktFull);
+    int payloadBytesReceived = bytes - sizeof(AIDPacketHeader);
+    char *payloadStart = buffer + sizeof(AIDPacketHeader);
+
+    if (payloadBytesReceived >= (int)pkt->PayloadSize) {
+      std::vector<uint8_t> fullData(payloadStart,
+                                    payloadStart + pkt->PayloadSize);
+      ProcessCompletePacket(*pkt, fullData);
+    } else {
+      m_IsReassembling = true;
+      m_PendingHeader = *pkt;
+      m_ReassemblyBuffer.clear();
+      if (payloadBytesReceived > 0) {
+        m_ReassemblyBuffer.insert(m_ReassemblyBuffer.end(), payloadStart,
+                                  payloadStart + payloadBytesReceived);
       }
-      break;
-    }
-    // It's not really handshake in LuaDebugger context
-    case AIDPacketID::Handshake: {
-      if (strncmp(pkt->Category, "LuaDebugger", 11) == 0 &&
-          pkt->PayloadSize >= 4) {
-        int32_t cmdID = 0;
-        std::memcpy(&cmdID, payload, 4);
-        char *data = payload + 4;
-        int dLen = pkt->PayloadSize - 4;
-
-        if (cmdID == 6 || cmdID == 4) { // Paused
-          if (g_AutoMode == IDLE) {
-            callbacks.OnScriptPaused((cmdID == 6) ? PauseReason::BREAKPOINT
-                                                  : PauseReason::STEP);
-            RefreshWatches();
-          }
-        } else if (cmdID == 5) {
-          callbacks.OnScriptResumed();
-          g_AutoMode = IDLE;
-        } else if (cmdID == 36) {
-          // Context info
-          // Script finished
-          if (dLen == 2)
-            callbacks.OnScriptFinished();
-          // Actual context info
-          else {
-            std::string msg = data;
-            callbacks.OnContextInfoRecieved(EventGotScriptContext(msg));
-          }
-        } else if (cmdID == 3) {
-          // Location update
-          std::string f = data;
-          data += f.length() + 1;
-          std::string func = data;
-          data += func.length() + 1;
-          int32_t ln = 0;
-          std::memcpy(&ln, data, 4);
-
-          g_CurrentFile = f;
-
-          if (g_AutoMode != IDLE) {
-            ProcessAutoStep(f, ln);
-          } else {
-            callbacks.OnDbgLocationUpdate(f, ln, func);
-          }
-        } else if (cmdID == 41) {
-          callbacks.OnLuaError(EventLuaError(std::string(data, dLen)));
-          g_AutoMode = IDLE;
-        } else if (cmdID == 10) {
-          std::string n = data;
-          data += n.length() + 1;
-          callbacks.OnWatchRecieved(n, data);
-        } else if (cmdID == 12) {
-          std::string n = data;
-          data += n.length() + 1;
-          char *end = payload + pkt->PayloadSize;
-          int len = (int)(end - data);
-          len = (len == 1) ? 0 : len;
-          callbacks.OnSourceReceived(n, std::string(data, len));
-        } else {
-          callbacks.OnUnimplementedPacketReceived(pktFull);
-        }
-      } else {
-        callbacks.OnUnimplementedPacketReceived(pktFull);
-      }
-
-      break;
-    }
-    case AIDPacketID::DataResponse: {
-      char *payloadPtr = buffer + sizeof(AIDPacketHeader);
-      if (strncmp(pkt->Category, "PTree", 5) == 0) {
-        std::cout << "[TREE] Received (" << pkt->PayloadSize << " bytes)"
-                  << std::endl;
-      } else if (!*pkt->Category && pkt->PayloadSize == 8 &&
-                 (strncmp(payloadPtr, "GuildII", 8) == 0)) {
-        if (!g_RecievedReadyPacket) {
-          /*std::cout << ANSI_MAGENTA
-                    << "[SYSTEM] Received packet: Game is ready. Attaching "
-                       "debugger..."
-                    << std::endl;*/
-          SendLuaAttach();
-          callbacks.OnConnectionStateChanged(ConnectionState::GAME_READY);
-          g_RecievedReadyPacket = true;
-        }
-      } else {
-        callbacks.OnUnimplementedPacketReceived(pktFull);
-      }
-
-      break;
-    }
-    case AIDPacketID::Disconnect:
-      callbacks.OnConnectionStateChanged(ConnectionState::GAME_DISCONNECTED);
-      g_IsConnected = false;
-      g_RecievedReadyPacket = false;
-      break;
-
-    case AIDPacketID::Dropped:
-      std::cout << ANSI_RED << "[SYSTEM] Packet dropped." << ANSI_RESET
-                << std::endl;
-      break;
-    case AIDPacketID::SyncPing:
-    case AIDPacketID::SyncPong:
-    case AIDPacketID::Ping:
-      // Skip those, we treat all packets as pings
-      break;
-    default:
-      callbacks.OnUnimplementedPacketReceived(pktFull);
     }
   }
 }
