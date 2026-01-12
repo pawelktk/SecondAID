@@ -1419,6 +1419,8 @@ class GlobalsManager {
       "ShowTutorialBoxNoWait",
       "MsgQuest",
       "InitAlias",
+      "GetVariableParameters",
+
       "STOP_FORCE_DWORD",
       "STOP_NOMOVE",
       "STOP_NOSTOP",
@@ -1427,6 +1429,7 @@ class GlobalsManager {
 
       "MEASUREINIT_SELECTION",
       "MEASUREINIT_PANEL_CLASS",
+      
       // from FUN_0056b400
       "cl_InputGameModule",
       "cl_SimCommand",
