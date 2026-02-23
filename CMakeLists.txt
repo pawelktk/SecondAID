@@ -98,7 +98,7 @@ set(SOURCES
 
 add_executable(SecondAID-GUI ${SOURCES})
 
-target_include_directories(SecondAID-GUI PRIVATE include)
+target_include_directories(SecondAID-GUI PRIVATE include protocol)
 
 
 target_link_libraries(SecondAID-GUI PRIVATE imgui)
