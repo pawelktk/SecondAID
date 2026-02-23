@@ -111,7 +111,6 @@ public:
             }
 
             std::string hoveredWord = lineText.substr(start, end - start);
-
             if (!hoveredWord.empty() && !IsLuaKeyword(hoveredWord)) {
               const ScriptAPI::FuncDesc *func = FindExactFunction(hoveredWord);
               if (func) {
@@ -329,7 +328,7 @@ private:
       if (ImGui::BeginTable("##ArgsTable", 2,
                             ImGuiTableFlags_SizingFixedFit |
                                 ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Decl", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Decl", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Desc", ImGuiTableColumnFlags_WidthStretch);
 
         for (const auto &p : func->Params) {
