@@ -380,7 +380,8 @@ public:
                 { "pRoom", "Alias ( of type room)", "Alias of the building", false },
             }},
             { "CameraIsIndoor", "Boolean", "returns true if the camera is inside a building, regardless of being locked or not", "Global", {}}, // No params
-            { "CameraIsTerrain", "Boolean", "returns true if the camera has been locked, regardless of being inside a building or in terrain", "Global", {}}, // No params
+            { "CameraIsTerrain", "Boolean", "returns true if the camera is in terrain, regardless of being locked or not", "Global", {}}, // No params
+            { "CameraIsLocked", "Boolean", "returns true if the camera has been locked, regardless of being inside a building or in terrain", "Global", {}}, // No params
             { "CameraLock", "Nil", "Lock variant #1: Lock the camera to given position", "Global", {
                 { "pLocator", "Alias ( of type position)", "a locator that defines a camera position", false },
             }},
@@ -2802,7 +2803,7 @@ public:
             { "SquadCreate", "Boolean", "Creates a new squad action on a guild object. It can be only one squad action on the object at the same time.", "Global", {
                 { "pObject", "Alias ( of type guildobject)", "object to create the squad for", false },
                 { "Measure", "Number or String", "The measure to start. int = measure database ID / string = name of measure", false },
-                { "Alias ( of type corenode pdestination)", "...", "Destination (optional)", true },
+                { "Alias ( of type corenode)", "pdestination", "Destination (optional)", true },
                 { "BehaviorLeader", "Any", "Behavior of the leader", true },
                 { "BehaviorMember", "Any", "Behavior of each member", true },
             }}, // [AUTO-FIXED PARAMS]

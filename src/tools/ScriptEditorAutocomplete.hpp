@@ -4,10 +4,10 @@
 #include "imgui.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <string>
 #include <unordered_set>
 #include <vector>
-
 class AutocompleteSystem {
 private:
   struct CompletionCandidate {
@@ -40,14 +40,98 @@ private:
 public:
   bool Enabled = true;
   bool SuppressOnLuaKeywords = true;
+  bool EnableHoverTooltip = true;
 
   AutocompleteSystem() = default;
+
+  void HandleHover(TextEditor &editor) {
+    if (!EnableHoverTooltip || isOpen)
+      return;
+
+    if (ImGui::IsItemHovered()) {
+      ImVec2 mousePos = ImGui::GetMousePos();
+
+      ImVec2 winPos = ImGui::GetWindowPos();
+
+      float lineHeight = editor.GetLineHeight();
+      float glyphWidth = editor.GetGlyphWidth();
+
+      int totalLines = editor.GetLineCount();
+      int digits = 1;
+      if (totalLines > 9)
+        digits = (int)log10((double)totalLines) + 1;
+
+      float sidebarWidth = (digits + 4) * glyphWidth + 20.0f;
+
+      float localX = mousePos.x - winPos.x + ImGui::GetScrollX() - sidebarWidth;
+      float localY = mousePos.y - winPos.y;
+
+      if (localX < 0 || localY < 0)
+        return;
+
+      int lineOffset = (int)(localY / lineHeight);
+      int line = editor.GetFirstVisibleLine() + lineOffset;
+
+      if (line >= 0 && line < editor.GetLineCount()) {
+        std::string lineText = editor.GetLineText(line);
+        int visualColTarget = (int)(localX / glyphWidth);
+
+        int index = -1;
+        int currentVisual = 0;
+        int tabSize = editor.GetTabSize();
+
+        for (size_t i = 0; i < lineText.size(); ++i) {
+          int charWidth = 1;
+          if (lineText[i] == '\t') {
+            charWidth = tabSize - (currentVisual % tabSize);
+          }
+          if (visualColTarget < currentVisual + charWidth) {
+            index = (int)i;
+            break;
+          }
+          currentVisual += charWidth;
+        }
+        if (index >= 0 && index < (int)lineText.size()) {
+          char c = lineText[index];
+          if (isalnum(c) || c == '_') {
+            int start = index;
+            while (start > 0) {
+              char p = lineText[start - 1];
+              if (!isalnum(p) && p != '_')
+                break;
+              start--;
+            }
+
+            int end = index;
+            while (end < (int)lineText.size()) {
+              char n = lineText[end];
+              if (!isalnum(n) && n != '_')
+                break;
+              end++;
+            }
+
+            std::string hoveredWord = lineText.substr(start, end - start);
+
+            if (!hoveredWord.empty() && !IsLuaKeyword(hoveredWord)) {
+              const ScriptAPI::FuncDesc *func = FindExactFunction(hoveredWord);
+              if (func) {
+                ImGui::BeginTooltip();
+                RenderFuncDoc(func);
+                ImGui::EndTooltip();
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   void PreRender(TextEditor &editor) {
     if (!Enabled) {
       isOpen = false;
       return;
     }
+
     ImGuiIO &io = ImGui::GetIO();
     wasTyping = false;
     handleNav = false;
@@ -183,7 +267,6 @@ public:
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
 
     if (ImGui::Begin("##AutocompletePopup", nullptr, flags)) {
-
       if (ImGui::BeginChild("##List", ImVec2(0, 120), false)) {
         for (int i = 0; i < suggestions.size(); ++i) {
           const auto &item = suggestions[i];
@@ -204,69 +287,9 @@ public:
         }
         ImGui::EndChild();
       }
-
       ImGui::Separator();
       if (selectedIndex >= 0 && selectedIndex < suggestions.size()) {
-        const auto &item = suggestions[selectedIndex];
-
-        ImGui::TextColored(ImVec4(0.35f, 0.6f, 0.85f, 1.0f), "%s",
-                           item.func->ReturnType);
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s",
-                           item.func->Name);
-
-        ImGui::SameLine();
-        ImGui::TextDisabled("(");
-        ImGui::SameLine();
-        if (item.func->Params.empty()) {
-          ImGui::TextDisabled(")");
-        } else {
-          ImGui::TextDisabled("...");
-          ImGui::SameLine();
-          ImGui::TextDisabled(")");
-        }
-
-        ImGui::Spacing();
-        ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 600.0f);
-        ImGui::TextWrapped("%s", item.func->Desc);
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-
-        if (!item.func->Params.empty()) {
-          ImGui::Separator();
-          ImGui::TextDisabled("Arguments:");
-
-          if (ImGui::BeginTable("##ArgsTable", 2,
-                                ImGuiTableFlags_SizingFixedFit |
-                                    ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Decl", ImGuiTableColumnFlags_WidthFixed);
-            ImGui::TableSetupColumn("Desc", ImGuiTableColumnFlags_WidthStretch);
-
-            for (const auto &p : item.func->Params) {
-              ImGui::TableNextRow();
-
-              ImGui::TableSetColumnIndex(0);
-              ImGui::TextColored(ImVec4(0.3f, 0.7f, 0.6f, 1.0f), "%s", p.Type);
-              ImGui::SameLine();
-              ImGui::Text("%s", p.Name);
-              if (p.IsOptional) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("?");
-              }
-
-              ImGui::TableSetColumnIndex(1);
-              if (strlen(p.Desc) > 0) {
-                ImGui::PushStyleColor(ImGuiCol_Text,
-                                      ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-                ImGui::TextWrapped("%s", p.Desc);
-                ImGui::PopStyleColor();
-              } else {
-                ImGui::TextDisabled("-");
-              }
-            }
-            ImGui::EndTable();
-          }
-        }
+        RenderFuncDoc(suggestions[selectedIndex].func);
       }
 
       ImGui::End();
@@ -276,6 +299,76 @@ public:
   }
 
 private:
+  void RenderFuncDoc(const ScriptAPI::FuncDesc *func) {
+    ImGui::TextColored(ImVec4(0.35f, 0.6f, 0.85f, 1.0f), "%s",
+                       func->ReturnType);
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", func->Name);
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("(");
+    ImGui::SameLine();
+    if (func->Params.empty()) {
+      ImGui::TextDisabled(")");
+    } else {
+      ImGui::TextDisabled("...");
+      ImGui::SameLine();
+      ImGui::TextDisabled(")");
+    }
+
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 600.0f);
+    ImGui::TextWrapped("%s", func->Desc);
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+
+    if (!func->Params.empty()) {
+      ImGui::Separator();
+      ImGui::TextDisabled("Arguments:");
+
+      if (ImGui::BeginTable("##ArgsTable", 2,
+                            ImGuiTableFlags_SizingFixedFit |
+                                ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Decl", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Desc", ImGuiTableColumnFlags_WidthStretch);
+
+        for (const auto &p : func->Params) {
+          ImGui::TableNextRow();
+
+          ImGui::TableSetColumnIndex(0);
+          ImGui::TextColored(ImVec4(0.3f, 0.7f, 0.6f, 1.0f), "%s", p.Type);
+          ImGui::SameLine();
+          ImGui::Text("%s", p.Name);
+          if (p.IsOptional) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("?");
+          }
+
+          ImGui::TableSetColumnIndex(1);
+          if (strlen(p.Desc) > 0) {
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui::TextWrapped("%s", p.Desc);
+            ImGui::PopStyleColor();
+          } else {
+            ImGui::TextDisabled("-");
+          }
+        }
+        ImGui::EndTable();
+      }
+    }
+  }
+
+  const ScriptAPI::FuncDesc *FindExactFunction(const std::string &name) {
+    auto &allFuncs = ScriptAPI::Database::GetEngineFunctions();
+    for (const auto &func : allFuncs) {
+      if (std::string(func.Name) == name) {
+        return &func;
+      }
+    }
+    return nullptr;
+  }
+
   bool IsLuaKeyword(const std::string &word) {
     return luaKeywords.find(word) != luaKeywords.end();
   }

@@ -597,7 +597,9 @@ public:
           ImGui::MenuItem("Suppress autocomplete on Lua Keywords", nullptr,
                           &autocomplete.SuppressOnLuaKeywords);
           ImGui::EndDisabled();
+          ImGui::MenuItem("Show Hover Tooltips", nullptr, &autocomplete.EnableHoverTooltip);
           ImGui::EndMenu();
+          
         }
         ImGui::EndMenuBar();
       }
@@ -625,6 +627,10 @@ public:
       if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         autocomplete.PostRender(editor);
       }
+      autocomplete.HandleHover(editor);
+      /*if (ImGui::IsWindowHovered()) {
+        autocomplete.HandleHover(editor);
+      }*/
       ImGui::EndChild();
       autocomplete.DrawPopup();
 
