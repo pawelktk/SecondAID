@@ -1,0 +1,70 @@
+name: Build SecondAID-GUI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake git pkg-config \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxi-dev libgl1-mesa-dev libxkbcommon-dev
+
+      - name: Configure CMake
+        run: |
+          mkdir build-linux
+          cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-linux --config Release -j $(nproc)
+
+      - name: Upload Linux Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecondAID-GUI-Linux
+          path: build-linux/SecondAID-GUI
+
+  build-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install MinGW
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 cmake git
+
+      - name: Create Toolchain File
+        run: |
+          echo "set(CMAKE_SYSTEM_NAME Windows)" > Toolchain-mingw.cmake
+          echo "set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc)" >> Toolchain-mingw.cmake
+          echo "set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)" >> Toolchain-mingw.cmake
+          echo "set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)" >> Toolchain-mingw.cmake
+
+      - name: Configure CMake
+        run: |
+          mkdir build-windows
+          cmake -S . -B build-windows \
+            -DCMAKE_TOOLCHAIN_FILE=Toolchain-mingw.cmake \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-windows --config Release -j $(nproc)
+
+      - name: Upload Windows Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecondAID-GUI-Windows
+          path: build-windows/SecondAID-GUI.exe
